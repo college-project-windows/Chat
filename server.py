@@ -1,69 +1,83 @@
 import os
 import json
-import base64
-import rsa
+from flask import Flask, request, jsonify
+from flask_socketio import SocketIO, join_room, leave_room, send
 import firebase_admin
 from firebase_admin import credentials, firestore
-from flask import Flask, request
-from flask_socketio import SocketIO, send, emit
 
-# Initialize Flask App
+# Initialize Flask app
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# 🔐 Load Firebase Credentials (Use environment variable for security)
-firebase_cred = os.getenv("FIREBASE_CREDENTIALS")
-if firebase_cred:
-    cred_dict = json.loads(base64.b64decode(firebase_cred).decode("utf-8"))
-    cred = credentials.Certificate(cred_dict)
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-else:
+# Load Firebase credentials from environment variable
+firebase_credentials_json = os.getenv("FIREBASE_CREDENTIALS")
+
+if not firebase_credentials_json:
     raise ValueError("Firebase credentials not found!")
 
-# 🔑 RSA Key Generation for End-to-End Encryption
-(pub_key, priv_key) = rsa.newkeys(512)
+# Parse the JSON string
+firebase_credentials = json.loads(firebase_credentials_json)
 
-# Store connected clients
-clients = {}
+# Initialize Firebase Admin SDK
+cred = credentials.Certificate(firebase_credentials)
+firebase_admin.initialize_app(cred)
 
-@app.route('/')
+# Firestore database
+db = firestore.client()
+
+# Store connected users
+users = {}
+
+@app.route("/")
 def home():
     return "Chat server is running!"
 
-@socketio.on('connect')
+# WebSocket connection
+@socketio.on("connect")
 def handle_connect():
     print(f"Client connected: {request.sid}")
-    clients[request.sid] = pub_key  # Store public key for encryption
-    emit("public_key", pub_key.save_pkcs1().decode(), room=request.sid)
 
-@socketio.on('disconnect')
+@socketio.on("disconnect")
 def handle_disconnect():
-    print(f"Client disconnected: {request.sid}")
-    clients.pop(request.sid, None)
+    if request.sid in users:
+        print(f"Client {users[request.sid]} disconnected")
+        del users[request.sid]
+    else:
+        print(f"Client {request.sid} disconnected")
 
-@socketio.on('message')
+# Join chat room
+@socketio.on("join")
+def handle_join(data):
+    username = data["username"]
+    room = data["room"]
+    join_room(room)
+    users[request.sid] = username
+    send(f"{username} has joined the chat!", to=room)
+
+# Leave chat room
+@socketio.on("leave")
+def handle_leave(data):
+    username = users.get(request.sid, "Unknown User")
+    room = data["room"]
+    leave_room(room)
+    send(f"{username} has left the chat!", to=room)
+
+# Handle chat messages
+@socketio.on("message")
 def handle_message(data):
-    try:
-        encrypted_message = data.get("message")
-        sender = data.get("sender")
+    username = users.get(request.sid, "Unknown User")
+    message = data["message"]
+    room = data["room"]
 
-        # Decrypt message
-        decrypted_message = rsa.decrypt(base64.b64decode(encrypted_message), priv_key).decode()
+    # Store message in Firestore
+    db.collection("chats").add({
+        "username": username,
+        "message": message,
+        "room": room
+    })
 
-        print(f"Received message from {sender}: {decrypted_message}")
+    send(f"{username}: {message}", to=room)
 
-        # Store message in Firebase Firestore
-        db.collection("chats").add({
-            "sender": sender,
-            "message": decrypted_message
-        })
-
-        # Broadcast decrypted message to all clients
-        emit("message", {"sender": sender, "message": decrypted_message}, broadcast=True)
-
-    except Exception as e:
-        print(f"Error handling message: {e}")
-
-if __name__ == '__main__':
-    socketio.run(app, host="0.0.0.0", port=10000)
+# Run Flask app with WebSockets
+if __name__ == "__main__":
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
