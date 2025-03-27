@@ -28,7 +28,7 @@ class ChatClient(QWidget):
         self.setLayout(layout)
 
         # Connect to WebSocket server
-        sio.connect("http://localhost:5000")  # Change to Render URL after deployment
+        sio.connect("https://chat-rde3.onrender.com")  # Change to Render URL after deployment
         sio.on("message", self.receive_message)
 
     def send_message(self):
