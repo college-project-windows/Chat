@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QTextEdit, QLine
 public_key, private_key = rsa.newkeys(512)
 
 # Server WebSocket URL (Change this to your Render URL)
-SERVER_URL = "https://chat-rde3.onrender.com"
+SERVER_URL = "https://chat-3-znpb.onrender.com"
 
 class ChatClient(QWidget):
     def __init__(self):
